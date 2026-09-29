@@ -1,4 +1,4 @@
-// Core configuration
+// Core configuration & Auth
 const API_BASE = window.CloudVaultAuth?.API_BASE || '';
 
 // DOM Elements
@@ -16,36 +16,40 @@ const toastContainer = document.getElementById('toast-container');
 // Global Stats elements
 const statTotalFiles = document.getElementById('stat-total-files');
 const statUniqueChunks = document.getElementById('stat-unique-chunks');
+const statSpaceSaved = document.getElementById('stat-space-saved');
+const metricSpaceSavedDisplay = document.getElementById('metric-space-saved-display');
+const storageProgressFill = document.getElementById('storage-progress-fill');
 const statOnlineNodes = document.getElementById('stat-online-nodes');
 const systemHealth = document.getElementById('system-health');
 
 // State tracking
 let nodeStatus = {};
 let filesCache = []; // Cache for file manifests
+let foldersCache = []; // Cache for folders
 let currentFolderId = 'root';
 let folderStack = [{ id: 'root', name: 'Root Storage' }];
 let currentViewMode = 'my-storage'; // 'my-storage' | 'shared-with-me'
+let searchQuery = '';
 
 // Helper: Show toast notification
 function showToast(message, type = 'info') {
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
   
-  // Icon based on type
   let icon = '';
   if (type === 'success') {
-    icon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"></path><path d="M22 4L12 14.01l-3-3"></path></svg>`;
+    icon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`;
   } else if (type === 'error') {
-    icon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`;
+    icon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>`;
   } else {
-    icon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`;
+    icon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" /></svg>`;
   }
 
   toast.innerHTML = `${icon}<span>${message}</span>`;
   toastContainer.appendChild(toast);
   
   setTimeout(() => {
-    toast.style.animation = 'slide-in 0.25s reverse cubic-bezier(0, 0, 0.2, 1) forwards';
+    toast.style.animation = 'toast-slide-in 0.25s reverse cubic-bezier(0, 0, 0.2, 1) forwards';
     setTimeout(() => {
       toast.remove();
     }, 250);
@@ -73,6 +77,24 @@ function formatDate(dateStr) {
     hour: '2-digit',
     minute: '2-digit'
   });
+}
+
+// Helper: Get File Type Icon SVG
+function getFileIconSvg(filename, mimeType) {
+  const ext = (filename || '').split('.').pop().toLowerCase();
+  
+  // Folder
+  if (mimeType === 'folder') {
+    return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>`;
+  }
+
+  // Image
+  if (['png', 'jpg', 'jpeg', 'svg', 'webp', 'gif'].includes(ext) || (mimeType && mimeType.startsWith('image/'))) {
+    return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>`;
+  }
+
+  // Code / Document / Default
+  return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>`;
 }
 
 // Fetch Node status & update registry UI
@@ -114,7 +136,7 @@ async function updateNodes() {
                 <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
               </svg>
             </div>
-            <div>
+            <div class="node-name-group">
               <h4>${node.id.toUpperCase()}</h4>
               <span class="node-url">${node.url}</span>
             </div>
@@ -142,24 +164,318 @@ async function updateNodes() {
     });
 
     // Update global Stats Online nodes counter
-    statOnlineNodes.textContent = `${onlineCount} / ${nodes.length}`;
+    if (statOnlineNodes) {
+      statOnlineNodes.textContent = `${onlineCount} / ${nodes.length}`;
+    }
     
     // Update global System Health label
-    if (onlineCount === nodes.length) {
-      systemHealth.className = 'val status-ok';
-      systemHealth.textContent = 'HEALTHY';
-    } else if (onlineCount > 0) {
-      systemHealth.className = 'val status-degraded';
-      systemHealth.textContent = 'DEGRADED';
-    } else {
-      systemHealth.className = 'val status-error';
-      systemHealth.textContent = 'FULLY OFFLINE';
+    if (systemHealth) {
+      if (onlineCount === nodes.length) {
+        systemHealth.className = 'system-pill status-healthy';
+        systemHealth.innerHTML = `<span class="pill-dot"></span> HEALTHY`;
+      } else if (onlineCount > 0) {
+        systemHealth.className = 'system-pill status-degraded';
+        systemHealth.innerHTML = `<span class="pill-dot"></span> DEGRADED`;
+      } else {
+        systemHealth.className = 'system-pill status-offline';
+        systemHealth.innerHTML = `<span class="pill-dot"></span> FULLY OFFLINE`;
+      }
     }
 
   } catch (err) {
     console.error(err);
-    nodesContainer.innerHTML = `<div class="error-state">Failed to sync with node registry: ${err.message}</div>`;
+    nodesContainer.innerHTML = `<div class="loading-placeholder" style="color: var(--color-danger);">Failed to sync with node registry: ${err.message}</div>`;
   }
+}
+
+// Render Files and Folders with optional live filter
+function renderFilesTable() {
+  const query = searchQuery.trim().toLowerCase();
+
+  if (currentViewMode === 'shared-with-me') {
+    let filteredFiles = filesCache;
+    let filteredFolders = foldersCache;
+
+    if (query) {
+      filteredFiles = filteredFiles.filter(f => (f.filename || '').toLowerCase().includes(query));
+      filteredFolders = filteredFolders.filter(f => (f.name || '').toLowerCase().includes(query));
+    }
+
+    fileCountBadge.textContent = `${filteredFiles.length} Shared Files, ${filteredFolders.length} Shared Folders`;
+    if (statTotalFiles) statTotalFiles.textContent = filesCache.length;
+
+    if (filteredFiles.length === 0 && filteredFolders.length === 0) {
+      filesListContainer.innerHTML = `
+        <tr>
+          <td colspan="5" class="empty-state">
+            ${query ? 'No matching shared files or folders found.' : 'No files or folders shared with you yet.'}
+          </td>
+        </tr>
+      `;
+      if (statUniqueChunks) statUniqueChunks.textContent = '0';
+      return;
+    }
+
+    filesListContainer.innerHTML = '';
+
+    // Render Shared Folders
+    filteredFolders.forEach(folder => {
+      const row = document.createElement('tr');
+      row.className = 'folder-row';
+      row.innerHTML = `
+        <td>
+          <div class="file-name-cell open-folder" data-id="${folder.id}" data-name="${folder.name}">
+            <div class="file-icon folder">
+              ${getFileIconSvg(folder.name, 'folder')}
+            </div>
+            <div class="file-details">
+              <span class="name">${folder.name}</span>
+              <span class="date">Owner: ${folder.ownerName || 'Unknown'}</span>
+            </div>
+          </div>
+        </td>
+        <td class="mime-cell"><span class="folder-badge">${folder.permission || 'VIEWER'}</span></td>
+        <td>--</td>
+        <td><span class="empty-text">Shared Directory</span></td>
+        <td class="actions-col">
+          <div class="action-buttons">
+            <button class="btn-action open-folder" data-id="${folder.id}" data-name="${folder.name}" title="Open Folder">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+              </svg>
+            </button>
+          </div>
+        </td>
+      `;
+      filesListContainer.appendChild(row);
+    });
+
+    // Render Shared Files
+    filteredFiles.forEach(file => {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>
+          <div class="file-name-cell">
+            <div class="file-icon file">
+              ${getFileIconSvg(file.filename, file.mimeType || file.mime_type)}
+            </div>
+            <div class="file-details">
+              <span class="name">${file.filename}</span>
+              <span class="date">Owner: ${file.ownerName || 'Unknown'} | Uploaded: ${formatDate(file.uploadedAt || file.uploaded_at)}</span>
+            </div>
+          </div>
+        </td>
+        <td class="mime-cell"><span class="folder-badge" style="background: var(--color-purple-subtle); color: var(--color-purple-text); border-color: var(--color-purple-border);">${file.permission || 'VIEWER'}</span></td>
+        <td>${formatBytes(file.size)}</td>
+        <td><span class="empty-text">Shared File</span></td>
+        <td class="actions-col">
+          <div class="action-buttons">
+            <button class="btn-action download" data-id="${file.id}" title="Download Shared File">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+              </svg>
+            </button>
+          </div>
+        </td>
+      `;
+      filesListContainer.appendChild(row);
+    });
+
+    return;
+  }
+
+  // My Storage View
+  let filteredFiles = filesCache;
+  let filteredFolders = foldersCache;
+
+  if (query) {
+    filteredFiles = filteredFiles.filter(f => (f.filename || '').toLowerCase().includes(query));
+    filteredFolders = filteredFolders.filter(f => (f.name || '').toLowerCase().includes(query));
+  }
+
+  fileCountBadge.textContent = `${filteredFiles.length} Files, ${filteredFolders.length} Folders`;
+  if (statTotalFiles) statTotalFiles.textContent = filesCache.length;
+
+  if (filteredFiles.length === 0 && filteredFolders.length === 0) {
+    filesListContainer.innerHTML = `
+      <tr>
+        <td colspan="5" class="empty-state">
+          ${query ? 'No matching files or folders found in this directory.' : 'No files or folders stored in this directory.'}
+        </td>
+      </tr>
+    `;
+    if (statUniqueChunks) statUniqueChunks.textContent = '0';
+    return;
+  }
+
+  // Compute reference counts for all chunks in the system
+  let totalLogicalSize = 0;
+  const uniqueChunks = new Map();
+  const chunkRefCounts = {};
+
+  filesCache.forEach(file => {
+    totalLogicalSize += parseInt(file.size, 10) || 0;
+    if (file.chunks) {
+      file.chunks.forEach(chunk => {
+        const hash = chunk.hash || chunk.chunk_hash;
+        if (hash) {
+          chunkRefCounts[hash] = (chunkRefCounts[hash] || 0) + 1;
+          uniqueChunks.set(hash, parseInt(chunk.size, 10) || 0);
+        }
+      });
+    }
+  });
+
+  // Calculate space savings
+  let totalPhysicalSize = 0;
+  uniqueChunks.forEach(size => { totalPhysicalSize += size; });
+  
+  let percentSaved = 0;
+  if (totalLogicalSize > 0) {
+    percentSaved = Math.max(0, 100 * (1 - (totalPhysicalSize / totalLogicalSize)));
+  }
+
+  const spaceSavedFormatted = `${percentSaved.toFixed(1)}%`;
+  if (statSpaceSaved) statSpaceSaved.textContent = spaceSavedFormatted;
+  if (metricSpaceSavedDisplay) metricSpaceSavedDisplay.textContent = spaceSavedFormatted;
+  if (storageProgressFill) {
+    storageProgressFill.style.width = `${Math.min(100, Math.max(10, percentSaved))}%`;
+  }
+
+  const uniqueChunkHashes = new Set();
+  filesListContainer.innerHTML = '';
+
+  // Render Folders first
+  filteredFolders.forEach(folder => {
+    const row = document.createElement('tr');
+    row.className = 'folder-row';
+    row.innerHTML = `
+      <td>
+        <div class="file-name-cell open-folder" data-id="${folder.id}" data-name="${folder.name}">
+          <div class="file-icon folder">
+            ${getFileIconSvg(folder.name, 'folder')}
+          </div>
+          <div class="file-details">
+            <span class="name">${folder.name}</span>
+            <span class="date">Directory Container</span>
+          </div>
+        </div>
+      </td>
+      <td class="mime-cell"><span class="folder-badge">Directory</span></td>
+      <td>--</td>
+      <td><span class="empty-text">Folder container</span></td>
+      <td class="actions-col">
+        <div class="action-buttons">
+          <button class="btn-action open-folder" data-id="${folder.id}" data-name="${folder.name}" title="Open Folder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+            </svg>
+          </button>
+          <button class="btn-action share-item" data-type="folder" data-id="${folder.id}" data-name="${folder.name}" title="Manage Sharing">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a5.97 5.97 0 00-.942 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+            </svg>
+          </button>
+          <button class="btn-action delete-folder" data-id="${folder.id}" title="Delete Folder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-1.8m-6 0v-1.8m6 0H9" />
+            </svg>
+          </button>
+        </div>
+      </td>
+    `;
+    filesListContainer.appendChild(row);
+  });
+
+  // Render Files
+  filteredFiles.forEach(file => {
+    const row = document.createElement('tr');
+    
+    // Calculate chunks mapping badges
+    let chunkFlowHTML = '<div class="chunk-flow-container">';
+    
+    if (file.chunks && file.chunks.length > 0) {
+      file.chunks.forEach((chunk, index) => {
+        const hash = chunk.hash || chunk.chunk_hash;
+        if (hash) uniqueChunkHashes.add(hash);
+        
+        // Check if chunk is reused (deduplicated)
+        const isReused = hash && chunkRefCounts[hash] > 1;
+        const reusedClass = isReused ? 'reused' : '';
+        const reusedLabel = isReused ? ' (Deduplicated)' : '';
+
+        // Node names where this chunk is stored
+        const hostNodes = chunk.nodeIds || chunk.node_ids || [chunk.nodeId];
+        
+        let indicatorsHTML = '';
+        hostNodes.forEach(nodeId => {
+          if (!nodeId) return;
+          const isNodeOnline = nodeStatus[nodeId] === true || nodeStatus[nodeId.toLowerCase()] === true;
+          const offlineClass = isNodeOnline ? '' : 'offline';
+          indicatorsHTML += `<span class="node-indicator ${nodeId.toLowerCase()} ${offlineClass}"></span>`;
+        });
+
+        const tooltipText = `Chunk ${index + 1}: ${hash ? hash.substring(0, 8) : 'unknown'}... | Size: ${formatBytes(chunk.size)}${reusedLabel} | Hosts: ${hostNodes.join(', ')}`;
+        
+        chunkFlowHTML += `
+          <span class="chunk-badge ${reusedClass}" title="${tooltipText}">
+            ${indicatorsHTML}
+            <span>C${index + 1}</span>
+            <div class="chunk-tooltip">${tooltipText}</div>
+          </span>
+        `;
+      });
+    } else {
+      chunkFlowHTML += '<span class="empty-text">No chunks mapped</span>';
+    }
+    chunkFlowHTML += '</div>';
+
+    row.innerHTML = `
+      <td>
+        <div class="file-name-cell">
+          <div class="file-icon file">
+            ${getFileIconSvg(file.filename, file.mimeType || file.mime_type)}
+          </div>
+          <div class="file-details">
+            <span class="name">${file.filename}</span>
+            <span class="date">Uploaded: ${formatDate(file.uploadedAt || file.uploaded_at)}</span>
+          </div>
+        </div>
+      </td>
+      <td class="mime-cell">${file.mimeType || file.mime_type || 'application/octet-stream'}</td>
+      <td>${formatBytes(file.size)}</td>
+      <td>${chunkFlowHTML}</td>
+      <td class="actions-col">
+        <div class="action-buttons">
+          <button class="btn-action share-item" data-type="file" data-id="${file.id}" data-name="${file.filename}" title="Share File">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a5.97 5.97 0 00-.942 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+            </svg>
+          </button>
+          <button class="btn-action inspect-json" data-id="${file.id}" title="Inspect JSON Manifest">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" />
+            </svg>
+          </button>
+          <button class="btn-action download" data-id="${file.id}" title="Download File">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+          </button>
+          <button class="btn-action delete" data-id="${file.id}" title="Delete File">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-1.8m-6 0v-1.8m6 0H9" />
+            </svg>
+          </button>
+        </div>
+      </td>
+    `;
+
+    filesListContainer.appendChild(row);
+  });
+
+  // Update unique chunks counter
+  if (statUniqueChunks) statUniqueChunks.textContent = uniqueChunkHashes.size;
 }
 
 // Fetch Files & Folders registry & update UI
@@ -169,272 +485,27 @@ async function updateFiles() {
       const res = await CloudVaultAuth.authFetch(`${API_BASE}/api/shared`);
       if (!res.ok) throw new Error('Failed to fetch shared items');
       const sharedData = await res.json();
-      const sharedFiles = sharedData.files || [];
-      const sharedFolders = sharedData.folders || [];
-      filesCache = sharedFiles;
-
-      fileCountBadge.textContent = `${sharedFiles.length} Shared Files, ${sharedFolders.length} Shared Folders`;
-      statTotalFiles.textContent = sharedFiles.length;
-
-      if (sharedFiles.length === 0 && sharedFolders.length === 0) {
-        filesListContainer.innerHTML = `
-          <tr>
-            <td colspan="5" class="empty-state">No files or folders shared with you yet.</td>
-          </tr>
-        `;
-        statUniqueChunks.textContent = '0';
-        return;
-      }
-
-      filesListContainer.innerHTML = '';
-
-      // Render Shared Folders
-      sharedFolders.forEach(folder => {
-        const row = document.createElement('tr');
-        row.className = 'folder-row';
-        row.innerHTML = `
-          <td>
-            <div class="file-name-cell open-folder" data-id="${folder.id}" data-name="${folder.name}" style="cursor: pointer;">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="margin-right: 0.5rem; vertical-align: middle;">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
-              </svg>
-              <span class="name" style="font-weight: 600; color: #f8fafc;">${folder.name}</span>
-              <span style="display: block; font-size: 0.7rem; color: #94a3b8; margin-top: 0.15rem;">Owner: ${folder.ownerName}</span>
-            </div>
-          </td>
-          <td class="mime-cell"><span class="folder-badge">${folder.permission}</span></td>
-          <td>--</td>
-          <td><span class="empty-text">Shared Directory</span></td>
-          <td class="actions-col">
-            <div class="action-buttons">
-              <button class="btn-action open-folder" data-id="${folder.id}" data-name="${folder.name}" title="Open Folder">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                </svg>
-              </button>
-            </div>
-          </td>
-        `;
-        filesListContainer.appendChild(row);
-      });
-
-      // Render Shared Files
-      sharedFiles.forEach(file => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-          <td>
-            <div class="file-name-cell">
-              <span class="name">${file.filename}</span>
-              <span class="date">Owner: ${file.ownerName} | Uploaded: ${formatDate(file.uploadedAt || file.uploaded_at)}</span>
-            </div>
-          </td>
-          <td class="mime-cell"><span style="background: rgba(99,102,241,0.2); color: #818cf8; font-size: 0.7rem; padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: 600;">${file.permission}</span></td>
-          <td>${formatBytes(file.size)}</td>
-          <td><span class="empty-text">Shared File</span></td>
-          <td class="actions-col">
-            <div class="action-buttons">
-              <button class="btn-action download" data-id="${file.id}" title="Download Shared File">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                </svg>
-              </button>
-            </div>
-          </td>
-        `;
-        filesListContainer.appendChild(row);
-      });
-
+      filesCache = sharedData.files || [];
+      foldersCache = sharedData.folders || [];
+      renderFilesTable();
       return;
     }
 
     // Default: My Storage view
     const folderRes = await CloudVaultAuth.authFetch(`${API_BASE}/api/folders?parentId=${currentFolderId}`);
-    const folders = folderRes.ok ? await folderRes.json() : [];
+    foldersCache = folderRes.ok ? await folderRes.json() : [];
 
     const fileRes = await CloudVaultAuth.authFetch(`${API_BASE}/api/files?folderId=${currentFolderId}`);
     if (!fileRes.ok) throw new Error('Failed to fetch files');
-    const files = await fileRes.json();
-    filesCache = files;
+    filesCache = await fileRes.json();
     
-    // Update counts
-    fileCountBadge.textContent = `${files.length} Files, ${folders.length} Folders`;
-    statTotalFiles.textContent = files.length;
-    
-    if (files.length === 0 && folders.length === 0) {
-      filesListContainer.innerHTML = `
-        <tr>
-          <td colspan="5" class="empty-state">No files or folders stored in this directory.</td>
-        </tr>
-      `;
-      statUniqueChunks.textContent = '0';
-      document.getElementById('stat-space-saved').innerHTML = '0%';
-      return;
-    }
-
-    // Space saving variables
-    let totalLogicalSize = 0;
-    const uniqueChunks = new Map();
-
-    // Compute reference counts for all chunks in the system
-    const chunkRefCounts = {};
-    files.forEach(file => {
-      totalLogicalSize += parseInt(file.size, 10) || 0;
-      if (file.chunks) {
-        file.chunks.forEach(chunk => {
-          const hash = chunk.hash || chunk.chunk_hash;
-          chunkRefCounts[hash] = (chunkRefCounts[hash] || 0) + 1;
-          uniqueChunks.set(hash, parseInt(chunk.size, 10) || 0);
-        });
-      }
-    });
-
-    // Update global space saved card
-    let totalPhysicalSize = 0;
-    uniqueChunks.forEach(size => { totalPhysicalSize += size; });
-    
-    let percentSaved = 0;
-    if (totalLogicalSize > 0) {
-      percentSaved = Math.max(0, 100 * (1 - (totalPhysicalSize / totalLogicalSize)));
-    }
-    
-    document.getElementById('stat-space-saved').innerHTML = `
-      ${percentSaved.toFixed(1)}%
-      <span style="font-size: 0.65rem; font-weight: 500; display: block; color: var(--text-secondary); margin-top: 0.15rem;">
-        Saved ${formatBytes(totalLogicalSize - totalPhysicalSize)}
-      </span>
-    `;
-
-    // Keep track of unique chunk hashes in system
-    const uniqueChunkHashes = new Set();
-    
-    filesListContainer.innerHTML = '';
-
-    // Render Folders first
-    folders.forEach(folder => {
-      const row = document.createElement('tr');
-      row.className = 'folder-row';
-      row.innerHTML = `
-        <td>
-          <div class="file-name-cell open-folder" data-id="${folder.id}" data-name="${folder.name}" style="cursor: pointer;">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="margin-right: 0.5rem; vertical-align: middle;">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
-            </svg>
-            <span class="name" style="font-weight: 600; color: #f8fafc;">${folder.name}</span>
-          </div>
-        </td>
-        <td class="mime-cell"><span class="folder-badge">Directory</span></td>
-        <td>--</td>
-        <td><span class="empty-text">Folder container</span></td>
-        <td class="actions-col">
-          <div class="action-buttons">
-            <button class="btn-action open-folder" data-id="${folder.id}" data-name="${folder.name}" title="Open Folder">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-              </svg>
-            </button>
-            <button class="btn-action share-item" data-type="folder" data-id="${folder.id}" data-name="${folder.name}" title="Manage Sharing">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a5.97 5.97 0 00-.942 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
-              </svg>
-            </button>
-            <button class="btn-action delete-folder" data-id="${folder.id}" title="Delete Folder">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-1.8m-6 0v-1.8m6 0H9" />
-              </svg>
-            </button>
-          </div>
-        </td>
-      `;
-      filesListContainer.appendChild(row);
-    });
-    files.forEach(file => {
-      const row = document.createElement('tr');
-      
-      // Calculate chunks mapping badges
-      let chunkFlowHTML = '<div class="chunk-flow-container">';
-      
-      if (file.chunks && file.chunks.length > 0) {
-        file.chunks.forEach((chunk, index) => {
-          const hash = chunk.hash || chunk.chunk_hash;
-          uniqueChunkHashes.add(hash);
-          
-          // Check if it is a shared (reused) chunk
-          const isReused = chunkRefCounts[hash] > 1;
-          const reusedClass = isReused ? 'reused' : '';
-          const reusedLabel = isReused ? ' (Deduplicated)' : '';
-
-          // Node names where this chunk is stored
-          const hostNodes = chunk.nodeIds || chunk.node_ids || [chunk.nodeId];
-          
-          let indicatorsHTML = '';
-          hostNodes.forEach(nodeId => {
-            const isNodeOnline = nodeStatus[nodeId] === true;
-            const offlineClass = isNodeOnline ? '' : 'offline';
-            indicatorsHTML += `<span class="node-indicator ${nodeId.toLowerCase()} ${offlineClass}"></span>`;
-          });
-
-          const tooltipText = `Chunk ${index + 1}: ${hash ? hash.substring(0, 8) : 'unknown'}... | Size: ${formatBytes(chunk.size)}${reusedLabel} | Hosts: ${hostNodes.join(', ')}`;
-          
-          chunkFlowHTML += `
-            <span class="chunk-badge ${reusedClass}" title="${tooltipText}">
-              ${indicatorsHTML}
-              <span>C${index + 1}</span>
-              <div class="chunk-tooltip">${tooltipText}</div>
-            </span>
-          `;
-        });
-      } else {
-        chunkFlowHTML += '<span class="empty-text">No chunks mapped</span>';
-      }
-      chunkFlowHTML += '</div>';
-
-      row.innerHTML = `
-        <td>
-          <div class="file-name-cell">
-            <span class="name">${file.filename}</span>
-            <span class="date">Uploaded: ${formatDate(file.uploadedAt || file.uploaded_at)}</span>
-          </div>
-        </td>
-        <td class="mime-cell">${file.mimeType || file.mime_type || 'application/octet-stream'}</td>
-        <td>${formatBytes(file.size)}</td>
-        <td>${chunkFlowHTML}</td>
-        <td class="actions-col">
-          <div class="action-buttons">
-            <button class="btn-action share-item" data-type="file" data-id="${file.id}" data-name="${file.filename}" title="Share File">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a5.97 5.97 0 00-.942 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
-              </svg>
-            </button>
-            <button class="btn-action inspect-json" data-id="${file.id}" title="Inspect JSON Manifest">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" />
-              </svg>
-            </button>
-            <button class="btn-action download" data-id="${file.id}" title="Download File">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-              </svg>
-            </button>
-            <button class="btn-action delete" data-id="${file.id}" title="Delete File">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-1.8m-6 0v-1.8m6 0H9" />
-              </svg>
-            </button>
-          </div>
-        </td>
-      `;
-
-      filesListContainer.appendChild(row);
-    });
-
-    // Update unique chunks counter
-    statUniqueChunks.textContent = uniqueChunkHashes.size;
+    renderFilesTable();
 
   } catch (err) {
     console.error(err);
     filesListContainer.innerHTML = `
       <tr>
-        <td colspan="5" class="error-state text-center">Failed to sync with file registry.</td>
+        <td colspan="5" class="empty-state" style="color: var(--color-danger);">Failed to sync with file registry: ${err.message}</td>
       </tr>
     `;
   }
@@ -464,7 +535,6 @@ nodesContainer.addEventListener('click', async (e) => {
           : `Restored node ${nodeId.toUpperCase()} back online`, 
         action === 'fail' ? 'info' : 'success'
       );
-      // Fast updates
       await updateNodes();
       await updateFiles();
     } else {
@@ -477,164 +547,216 @@ nodesContainer.addEventListener('click', async (e) => {
   }
 });
 
-// Inspect JSON Manifest
-filesListContainer.addEventListener('click', (e) => {
-  const btn = e.target.closest('.inspect-json');
-  if (!btn) return;
-  const fileId = btn.dataset.id;
-  
-  const file = filesCache.find(f => f.id === fileId);
-  if (file) {
-    document.getElementById('modal-file-id').textContent = `file://${file.filename}`;
-    document.getElementById('json-renderer').textContent = JSON.stringify(file, null, 2);
-    document.getElementById('json-modal').style.display = 'flex';
-  }
-});
-
-// Close Modal
-document.getElementById('close-modal').addEventListener('click', () => {
-  document.getElementById('json-modal').style.display = 'none';
-});
-
-document.getElementById('modal-overlay').addEventListener('click', () => {
-  document.getElementById('json-modal').style.display = 'none';
-});
-
-// Copy JSON
-document.getElementById('btn-copy-json').addEventListener('click', () => {
-  const codeContent = document.getElementById('json-renderer').textContent;
-  navigator.clipboard.writeText(codeContent)
-    .then(() => {
-      const copyBtn = document.getElementById('btn-copy-json');
-      const originalText = copyBtn.textContent;
-      copyBtn.textContent = 'Copied!';
-      copyBtn.style.borderColor = 'var(--color-green)';
-      copyBtn.style.color = 'var(--color-green)';
-      showToast('JSON copied to clipboard!', 'success');
-      setTimeout(() => {
-        copyBtn.textContent = originalText;
-        copyBtn.style.borderColor = '';
-        copyBtn.style.color = '';
-      }, 2000);
-    })
-    .catch(err => {
-      showToast('Failed to copy to clipboard', 'error');
-    });
-});
-
-// File downloads
+// Click delegation for table operations (Inspect JSON, Download, Delete file, Open folder, Delete folder, Share)
 filesListContainer.addEventListener('click', async (e) => {
-  const btn = e.target.closest('.download');
-  if (!btn) return;
-  const fileId = btn.dataset.id;
-  
-  // Local pre-flight check: Inform user if replica nodes are offline
-  const file = filesCache.find(f => f.id === fileId);
-  if (file && Array.isArray(file.chunks) && file.chunks.length > 0) {
-    const offlineChunks = [];
-    file.chunks.forEach((chunk, index) => {
-      if (Array.isArray(chunk.nodeIds) && chunk.nodeIds.length > 0) {
-        const hasOnlineReplica = chunk.nodeIds.some(nodeId => {
-          const norm = (nodeId || '').toLowerCase();
-          return nodeStatus[norm] === true || nodeStatus[nodeId] === true;
-        });
-        if (!hasOnlineReplica) {
-          offlineChunks.push(`Chunk ${index + 1} (stored on ${chunk.nodeIds.join(', ')})`);
+  // 1. Inspect JSON Manifest
+  const inspectBtn = e.target.closest('.inspect-json');
+  if (inspectBtn) {
+    const fileId = inspectBtn.dataset.id;
+    const file = filesCache.find(f => f.id === fileId);
+    if (file) {
+      document.getElementById('modal-file-id').textContent = `manifest://${file.filename}`;
+      document.getElementById('json-renderer').textContent = JSON.stringify(file, null, 2);
+      document.getElementById('json-modal').style.display = 'flex';
+    }
+    return;
+  }
+
+  // 2. Open Folder
+  const openFolderTarget = e.target.closest('.open-folder');
+  if (openFolderTarget) {
+    const folderId = openFolderTarget.dataset.id;
+    const folderName = openFolderTarget.dataset.name;
+    if (folderId && folderName) {
+      folderStack.push({ id: folderId, name: folderName });
+      currentFolderId = folderId;
+      renderBreadcrumbs();
+      await updateFiles();
+    }
+    return;
+  }
+
+  // 3. Delete Folder
+  const deleteFolderBtn = e.target.closest('.delete-folder');
+  if (deleteFolderBtn) {
+    const folderId = deleteFolderBtn.dataset.id;
+    if (!confirm('Are you sure you want to delete this folder and its contents?')) return;
+    
+    deleteFolderBtn.disabled = true;
+    try {
+      const res = await CloudVaultAuth.authFetch(`${API_BASE}/api/folders/${folderId}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        showToast('Folder deleted successfully', 'success');
+        await updateFiles();
+      } else {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to delete folder');
+      }
+    } catch (err) {
+      showToast(`Error: ${err.message}`, 'error');
+    } finally {
+      deleteFolderBtn.disabled = false;
+    }
+    return;
+  }
+
+  // 4. File Downloads
+  const downloadBtn = e.target.closest('.download');
+  if (downloadBtn) {
+    const fileId = downloadBtn.dataset.id;
+    const file = filesCache.find(f => f.id === fileId);
+    
+    // Check if replica nodes are offline
+    if (file && Array.isArray(file.chunks) && file.chunks.length > 0) {
+      const offlineChunks = [];
+      file.chunks.forEach((chunk, index) => {
+        if (Array.isArray(chunk.nodeIds) && chunk.nodeIds.length > 0) {
+          const hasOnlineReplica = chunk.nodeIds.some(nodeId => {
+            const norm = (nodeId || '').toLowerCase();
+            return nodeStatus[norm] === true || nodeStatus[nodeId] === true;
+          });
+          if (!hasOnlineReplica) {
+            offlineChunks.push(`Chunk ${index + 1} (on ${chunk.nodeIds.join(', ')})`);
+          }
+        }
+      });
+
+      if (offlineChunks.length > 0) {
+        const verb = offlineChunks.length > 1 ? 'are' : 'is';
+        showToast(`Cannot download file: ${offlineChunks.join(', ')} ${verb} offline.`, 'error');
+        return;
+      }
+    }
+
+    showToast('Initiating file download...', 'info');
+    downloadBtn.disabled = true;
+    
+    try {
+      const res = await CloudVaultAuth.authFetch(`${API_BASE}/api/download/${fileId}`);
+      if (!res.ok) {
+        let errorMessage = `Server error (${res.status})`;
+        try {
+          const errData = await res.json();
+          errorMessage = errData.error || errorMessage;
+        } catch (e) {}
+        throw new Error(errorMessage);
+      }
+      
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      
+      const disposition = res.headers.get('content-disposition');
+      let filename = (file && file.filename) ? file.filename : 'downloaded_file';
+      if (disposition && disposition.indexOf('filename=') !== -1) {
+        const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+        const matches = filenameRegex.exec(disposition);
+        if (matches != null && matches[1]) { 
+          filename = decodeURIComponent(matches[1].replace(/['"]/g, ''));
         }
       }
-    });
-
-    if (offlineChunks.length > 0) {
-      const verb = offlineChunks.length > 1 ? 'are' : 'is';
-      showToast(`Cannot download file: ${offlineChunks.join(', ')} ${verb} fully offline because the storage nodes have failed.`, 'error');
-      return;
+      
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      showToast('Download completed successfully!', 'success');
+    } catch (err) {
+      showToast(`Download failed: ${err.message}`, 'error');
+    } finally {
+      downloadBtn.disabled = false;
     }
+    return;
   }
 
-  showToast('Initiating file download...', 'info');
-  btn.disabled = true;
-  
-  try {
-    const res = await CloudVaultAuth.authFetch(`${API_BASE}/api/download/${fileId}`);
-    if (!res.ok) {
-      let errorMessage = `Server error (${res.status})`;
-      try {
-        const errText = await res.text();
-        const errData = JSON.parse(errText);
-        errorMessage = errData.error || errorMessage;
-      } catch (e) {
-        // Raw text response or non-JSON
+  // 5. Delete File
+  const deleteBtn = e.target.closest('.delete');
+  if (deleteBtn) {
+    const fileId = deleteBtn.dataset.id;
+    if (!confirm('Are you sure you want to delete this file from the CloudVault cluster?')) return;
+    
+    deleteBtn.disabled = true;
+    try {
+      const res = await CloudVaultAuth.authFetch(`${API_BASE}/api/files/${fileId}`, {
+        method: 'DELETE'
+      });
+      
+      if (res.ok) {
+        showToast('File and all its chunk replicas deleted successfully', 'success');
+        await updateFiles();
+        await updateNodes();
+      } else {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to delete');
       }
-      throw new Error(errorMessage);
+    } catch (err) {
+      showToast(`Error: ${err.message}`, 'error');
+    } finally {
+      deleteBtn.disabled = false;
     }
-    
-    const blob = await res.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    
-    // Extract filename from headers or cache
-    const disposition = res.headers.get('content-disposition');
-    let filename = (file && file.filename) ? file.filename : 'downloaded_file';
-    if (disposition && disposition.indexOf('filename=') !== -1) {
-      const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
-      const matches = filenameRegex.exec(disposition);
-      if (matches != null && matches[1]) { 
-        filename = decodeURIComponent(matches[1].replace(/['"]/g, ''));
-      }
-    }
-    
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
-    showToast('Download completed successfully!', 'success');
-  } catch (err) {
-    showToast(`Download failed: ${err.message}`, 'error');
-  } finally {
-    btn.disabled = false;
+    return;
+  }
+
+  // 6. Share Item
+  const shareBtn = e.target.closest('.share-item');
+  if (shareBtn) {
+    const type = shareBtn.dataset.type;
+    const id = shareBtn.dataset.id;
+    const name = shareBtn.dataset.name;
+    openShareModal(type, id, name);
   }
 });
 
-// Delete files
-filesListContainer.addEventListener('click', async (e) => {
-  const btn = e.target.closest('.delete');
-  if (!btn) return;
-  const fileId = btn.dataset.id;
-  
-  if (!confirm('Are you sure you want to delete this file from the CloudVault cluster?')) return;
-  
-  btn.disabled = true;
-  try {
-    const res = await CloudVaultAuth.authFetch(`${API_BASE}/api/files/${fileId}`, {
-      method: 'DELETE'
-    });
-    
-    if (res.ok) {
-      showToast('File and all its chunk replicas deleted successfully', 'success');
-      await updateFiles();
-      await updateNodes(); // Check chunk counts reduction
-    } else {
-      const data = await res.json();
-      throw new Error(data.error || 'Failed to delete');
-    }
-  } catch (err) {
-    showToast(`Error: ${err.message}`, 'error');
-  } finally {
-    btn.disabled = false;
-  }
-});
+// Close JSON Modal Handlers
+const jsonModal = document.getElementById('json-modal');
+const closeModalBtn = document.getElementById('close-modal');
+const modalOverlay = document.getElementById('modal-overlay');
+
+if (closeModalBtn) {
+  closeModalBtn.addEventListener('click', () => {
+    jsonModal.style.display = 'none';
+  });
+}
+
+if (modalOverlay) {
+  modalOverlay.addEventListener('click', () => {
+    jsonModal.style.display = 'none';
+  });
+}
+
+// Copy JSON Button
+const copyJsonBtn = document.getElementById('btn-copy-json');
+if (copyJsonBtn) {
+  copyJsonBtn.addEventListener('click', () => {
+    const codeContent = document.getElementById('json-renderer').textContent;
+    navigator.clipboard.writeText(codeContent)
+      .then(() => {
+        const originalText = copyJsonBtn.textContent;
+        copyJsonBtn.textContent = 'Copied!';
+        showToast('JSON copied to clipboard!', 'success');
+        setTimeout(() => {
+          copyJsonBtn.textContent = originalText;
+        }, 2000);
+      })
+      .catch(() => {
+        showToast('Failed to copy to clipboard', 'error');
+      });
+  });
+}
 
 // Drag & drop file upload
 function setupUpload() {
-  // Prevent default drag behaviors
+  if (!dropZone || !fileInput) return;
+
   ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
     dropZone.addEventListener(eventName, preventDefaults, false);
     document.body.addEventListener(eventName, preventDefaults, false);
   });
 
-  // Highlight drop zone
   ['dragenter', 'dragover'].forEach(eventName => {
     dropZone.addEventListener(eventName, () => dropZone.classList.add('dragover'), false);
   });
@@ -643,12 +765,14 @@ function setupUpload() {
     dropZone.addEventListener(eventName, () => dropZone.classList.remove('dragover'), false);
   });
 
-  // Handle dropped files
   dropZone.addEventListener('drop', handleDrop, false);
-
-  // Click to browse
   dropZone.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', handleFiles);
+
+  const sidebarUploadBtn = document.getElementById('btn-sidebar-upload');
+  if (sidebarUploadBtn) {
+    sidebarUploadBtn.addEventListener('click', () => fileInput.click());
+  }
 }
 
 function preventDefaults(e) {
@@ -665,18 +789,16 @@ function handleDrop(e) {
 function handleFiles(e) {
   const file = e.target.files[0];
   if (!file) return;
-  
   uploadFile(file);
 }
 
 function uploadFile(file) {
-  // Reset and show progress bar
   uploadFilename.textContent = file.name;
   uploadProgressFill.style.width = '0%';
   uploadPercentage.textContent = '0%';
+  uploadProgressFill.style.backgroundColor = 'var(--color-primary)';
   uploadProgressWrapper.style.display = 'block';
   
-  // Use XMLHttpRequest to track upload progress
   const xhr = new XMLHttpRequest();
   const formData = new FormData();
   formData.append('file', file);
@@ -690,7 +812,6 @@ function uploadFile(file) {
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
   }
   
-  // Track upload progress
   xhr.upload.onprogress = function(e) {
     if (e.lengthComputable) {
       const percentComplete = Math.round((e.loaded / e.total) * 100);
@@ -707,20 +828,19 @@ function uploadFile(file) {
         const totalChunks = metadata.chunks ? metadata.chunks.length : 0;
         
         if (totalChunks > 0 && reusedCount === totalChunks) {
-          showToast(`Duplicate file content! All ${totalChunks} chunks were deduplicated (100% space saved, no new data written to disk).`, 'success');
+          showToast(`Duplicate content! All ${totalChunks} chunks deduplicated (100% space saved).`, 'success');
         } else if (reusedCount > 0) {
-          showToast(`File uploaded! Reused ${reusedCount} out of ${totalChunks} existing chunks (partial deduplication).`, 'success');
+          showToast(`File uploaded! Reused ${reusedCount} of ${totalChunks} chunks via deduplication.`, 'success');
         } else {
-          showToast('File uploaded, chunked, and replicated successfully!', 'success');
+          showToast('File uploaded, chunked, and replicated across nodes!', 'success');
         }
       } catch (e) {
         showToast('File uploaded successfully!', 'success');
       }
       setTimeout(() => {
         uploadProgressWrapper.style.display = 'none';
-      }, 3000);
+      }, 2500);
       
-      // Refresh registry stats
       updateFiles();
       updateNodes();
     } else {
@@ -731,19 +851,19 @@ function uploadFile(file) {
       } catch (err) {}
       
       showToast(`Upload Failed: ${errorMsg}`, 'error');
-      uploadProgressFill.style.backgroundColor = 'var(--color-rose)';
+      uploadProgressFill.style.backgroundColor = 'var(--color-danger)';
     }
   };
   
   xhr.onerror = function() {
     showToast('Network error during upload', 'error');
-    uploadProgressFill.style.backgroundColor = 'var(--color-rose)';
+    uploadProgressFill.style.backgroundColor = 'var(--color-danger)';
   };
   
   xhr.send(formData);
 }
 
-// Handle Folder Operations & Breadcrumb
+// Handle Folder Operations & Breadcrumbs
 function renderBreadcrumbs() {
   const container = document.getElementById('breadcrumb-container');
   if (!container) return;
@@ -795,7 +915,7 @@ function setupShareModal() {
       if (!activeShareItem) return;
       const email = document.getElementById('share-email-input').value;
       const permission = document.getElementById('share-perm-select').value;
-      if (!email || !email.trim()) return showToast('Please enter target user email', 'error');
+      if (!email || !email.trim()) return showToast('Please enter recipient email address', 'error');
 
       const endpoint = activeShareItem.type === 'file' 
         ? `${API_BASE}/api/files/${activeShareItem.id}/share`
@@ -809,7 +929,7 @@ function setupShareModal() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to share');
-        showToast(data.message, 'success');
+        showToast(data.message || 'Shared successfully', 'success');
         document.getElementById('share-email-input').value = '';
         await refreshShareList();
       } catch (err) {
@@ -821,7 +941,7 @@ function setupShareModal() {
 
 async function openShareModal(type, id, name) {
   activeShareItem = { type, id, name };
-  document.getElementById('share-modal-title').textContent = `Sharing: ${name}`;
+  document.getElementById('share-modal-title').textContent = `Share: ${name}`;
   document.getElementById('share-email-input').value = '';
   document.getElementById('share-modal').style.display = 'flex';
   await refreshShareList();
@@ -830,7 +950,7 @@ async function openShareModal(type, id, name) {
 async function refreshShareList() {
   if (!activeShareItem) return;
   const container = document.getElementById('shares-list-container');
-  container.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.8rem; text-align: center; padding: 0.5rem;">Loading shares...</div>';
+  container.innerHTML = '<div style="color: var(--text-muted); font-size: 0.78rem; text-align: center; padding: 0.5rem;">Loading shares...</div>';
 
   const endpoint = activeShareItem.type === 'file'
     ? `${API_BASE}/api/files/${activeShareItem.id}/shares`
@@ -842,22 +962,22 @@ async function refreshShareList() {
     const shares = await res.json();
 
     if (shares.length === 0) {
-      container.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.8rem; text-align: center; padding: 0.5rem;">Not shared with anyone yet.</div>';
+      container.innerHTML = '<div style="color: var(--text-muted); font-size: 0.78rem; text-align: center; padding: 0.5rem;">Not shared with anyone yet.</div>';
       return;
     }
 
     container.innerHTML = '';
     shares.forEach(s => {
       const item = document.createElement('div');
-      item.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-glass); font-size: 0.8rem;';
+      item.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-color); font-size: 0.8rem;';
       item.innerHTML = `
         <div>
-          <span style="color: #f8fafc; font-weight: 500;">${s.userName || s.userEmail}</span>
-          <span style="color: #94a3b8; font-size: 0.75rem; margin-left: 0.5rem;">(${s.userEmail})</span>
+          <span style="color: var(--text-main); font-weight: 600;">${s.userName || s.userEmail}</span>
+          <span style="color: var(--text-muted); font-size: 0.75rem; margin-left: 0.35rem;">(${s.userEmail})</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 0.5rem;">
-          <span style="background: rgba(99,102,241,0.2); color: #818cf8; font-size: 0.7rem; padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: 600;">${s.permission}</span>
-          <button class="revoke-share-btn" data-userid="${s.sharedWithUserId}" style="background: none; border: none; color: #fb7185; cursor: pointer; padding: 0.2rem;" title="Revoke Share">&times;</button>
+        <div style="display: flex; align-items: center; gap: 0.4rem;">
+          <span style="background: var(--color-purple-subtle); color: var(--color-purple-text); border: 1px solid var(--color-purple-border); font-size: 0.68rem; padding: 0.1rem 0.4rem; border-radius: 4px; font-weight: 600;">${s.permission}</span>
+          <button class="revoke-share-btn" data-userid="${s.sharedWithUserId}" style="background: none; border: none; color: var(--color-danger); cursor: pointer; padding: 0.2rem; font-size: 1.1rem; line-height: 1;" title="Revoke Share">&times;</button>
         </div>
       `;
 
@@ -880,22 +1000,11 @@ async function refreshShareList() {
       container.appendChild(item);
     });
   } catch (err) {
-    container.innerHTML = `<div style="color: var(--color-rose); font-size: 0.8rem; padding: 0.5rem;">${err.message}</div>`;
+    container.innerHTML = `<div style="color: var(--color-danger); font-size: 0.78rem; padding: 0.5rem;">${err.message}</div>`;
   }
 }
 
-// Click delegation for Share Buttons
-filesListContainer.addEventListener('click', (e) => {
-  const shareBtn = e.target.closest('.share-item');
-  if (shareBtn) {
-    const type = shareBtn.dataset.type;
-    const id = shareBtn.dataset.id;
-    const name = shareBtn.dataset.name;
-    openShareModal(type, id, name);
-  }
-});
-
-// New Folder Button
+// New Folder Creation
 function setupFolderButton() {
   const btn = document.getElementById('btn-new-folder');
   if (!btn) return;
@@ -922,48 +1031,93 @@ function setupFolderButton() {
   });
 }
 
-// Setup View Mode Tabs (My Storage vs Shared with Me)
+// Setup View Mode Tabs (My Storage vs Shared with Me) and Sidebar Links
 function setupViewModeTabs() {
   const tabMyStorage = document.getElementById('tab-my-storage');
   const tabShared = document.getElementById('tab-shared-with-me');
+  const navMyFiles = document.getElementById('nav-my-files');
+  const navShared = document.getElementById('nav-shared-files');
+  const navNodes = document.getElementById('nav-cluster-nodes');
   const btnNewFolder = document.getElementById('btn-new-folder');
 
-  if (!tabMyStorage || !tabShared) return;
-
-  tabMyStorage.addEventListener('click', () => {
+  function switchToMyStorage() {
     if (currentViewMode === 'my-storage') return;
     currentViewMode = 'my-storage';
-    tabMyStorage.classList.add('active');
-    tabMyStorage.style.background = 'rgba(56, 189, 248, 0.2)';
-    tabMyStorage.style.color = '#38bdf8';
 
-    tabShared.classList.remove('active');
-    tabShared.style.background = 'transparent';
-    tabShared.style.color = 'var(--text-secondary)';
+    if (tabMyStorage) tabMyStorage.classList.add('active');
+    if (tabShared) tabShared.classList.remove('active');
+    if (navMyFiles) navMyFiles.classList.add('active');
+    if (navShared) navShared.classList.remove('active');
+    if (navNodes) navNodes.classList.remove('active');
 
     if (btnNewFolder) btnNewFolder.style.display = 'inline-flex';
     currentFolderId = 'root';
     folderStack = [{ id: 'root', name: 'Root Storage' }];
     renderBreadcrumbs();
     updateFiles();
-  });
+  }
 
-  tabShared.addEventListener('click', () => {
+  function switchToShared() {
     if (currentViewMode === 'shared-with-me') return;
     currentViewMode = 'shared-with-me';
-    tabShared.classList.add('active');
-    tabShared.style.background = 'rgba(56, 189, 248, 0.2)';
-    tabShared.style.color = '#38bdf8';
 
-    tabMyStorage.classList.remove('active');
-    tabMyStorage.style.background = 'transparent';
-    tabMyStorage.style.color = 'var(--text-secondary)';
+    if (tabShared) tabShared.classList.add('active');
+    if (tabMyStorage) tabMyStorage.classList.remove('active');
+    if (navShared) navShared.classList.add('active');
+    if (navMyFiles) navMyFiles.classList.remove('active');
+    if (navNodes) navNodes.classList.remove('active');
 
     if (btnNewFolder) btnNewFolder.style.display = 'none';
     currentFolderId = 'root';
     folderStack = [{ id: 'root', name: 'Shared Storage' }];
     renderBreadcrumbs();
     updateFiles();
+  }
+
+  if (tabMyStorage) tabMyStorage.addEventListener('click', switchToMyStorage);
+  if (navMyFiles) navMyFiles.addEventListener('click', switchToMyStorage);
+
+  if (tabShared) tabShared.addEventListener('click', switchToShared);
+  if (navShared) navShared.addEventListener('click', switchToShared);
+
+  if (navNodes) {
+    navNodes.addEventListener('click', () => {
+      const section = document.getElementById('cluster-nodes-section');
+      if (section) {
+        section.scrollIntoView({ behavior: 'smooth' });
+      }
+    });
+  }
+}
+
+// Live Search Filter Handler
+function setupSearchFilter() {
+  const searchInput = document.getElementById('file-search-input');
+  if (!searchInput) return;
+
+  searchInput.addEventListener('input', (e) => {
+    searchQuery = e.target.value;
+    renderFilesTable();
+  });
+}
+
+// Mobile Menu Toggle
+function setupMobileMenu() {
+  const toggleBtn = document.getElementById('btn-mobile-menu');
+  const sidebar = document.getElementById('app-sidebar');
+  if (!toggleBtn || !sidebar) return;
+
+  toggleBtn.addEventListener('click', () => {
+    sidebar.classList.toggle('sidebar-open');
+  });
+
+  // Close sidebar on click outside on mobile
+  document.addEventListener('click', (e) => {
+    if (sidebar.classList.contains('sidebar-open') && 
+        !sidebar.contains(e.target) && 
+        !toggleBtn.contains(e.target)) {
+      sidebar.classList.remove('sidebar-open');
+    }
   });
 }
 
@@ -989,13 +1143,15 @@ async function init() {
   setupFolderButton();
   setupShareModal();
   setupViewModeTabs();
+  setupSearchFilter();
+  setupMobileMenu();
   renderBreadcrumbs();
   
   // Initial loading state sync
   await updateNodes();
   await updateFiles();
   
-  // Dynamic polling — always refresh nodes first so nodeStatus is fresh before files render dots
+  // Polling for cluster state & files
   setInterval(async () => {
     await updateNodes();
     await updateFiles();
